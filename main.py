@@ -3,10 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
 from io import BytesIO
 import uvicorn
+import re
 
 app = FastAPI()
 
-# Habilitar CORS para web GitHub Pages
+# Habilitar CORS para permitir acceso desde GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,54 +17,52 @@ app.add_middleware(
 )
 
 def limpiar_numero(valor):
+    """Convierte texto con coma a float."""
     try:
         return float(valor.replace(",", "."))
     except:
         return None
 
+# 🔎 Detecta filas del PDF TZone con REGEX
+PATRON = re.compile(
+    r"(\d{2}/\d{2}/\d{4}),?\s+(\d{2}:\d{2}:\d{2})\s+([\d.,]+)\s+([\d.,]+)"
+)
 
 @app.post("/procesar")
 async def procesar_pdf(file: UploadFile = File(...)):
     try:
+        # Leemos el contenido del PDF
         contenido = await file.read()
-
-        # 🔥 ESTA ES LA CLAVE 🔥
-        # Convertimos el contenido a un archivo en memoria con seek()
         archivo_memoria = BytesIO(contenido)
 
         datos = []
 
-        # Abrir PDF desde BytesIO (FUNCIONA SIEMPRE)
+        # Abrir PDF desde BytesIO (compatible Render)
         with pdfplumber.open(archivo_memoria) as pdf:
             for pagina in pdf.pages:
-                tablas = pagina.extract_tables()
+                texto = pagina.extract_text()
 
-                for tabla in tablas:
-                    for fila in tabla:
+                if not texto:
+                    continue
 
-                        if not fila or "Fecha" in fila[0]:
+                # Procesar línea por línea
+                for linea in texto.split("\n"):
+                    coincide = PATRON.search(linea)
+                    if coincide:
+                        fecha, hora, temp, rh = coincide.groups()
+
+                        temp = limpiar_numero(temp)
+                        rh = limpiar_numero(rh)
+
+                        if temp is None or rh is None:
                             continue
-                        if len(fila) < 4:
-                            continue
 
-                        try:
-                            fecha = fila[0].strip()
-                            hora = fila[1].strip()
-                            temp = limpiar_numero(fila[2])
-                            hum = limpiar_numero(fila[3])
-
-                            if temp is None or hum is None:
-                                continue
-
-                            datos.append({
-                                "Fecha": fecha,
-                                "Hora": hora,
-                                "Temp_C": temp,
-                                "RH": hum
-                            })
-
-                        except:
-                            continue
+                        datos.append({
+                            "Fecha": fecha,
+                            "Hora": hora,
+                            "Temp_C": temp,
+                            "RH": rh
+                        })
 
         if not datos:
             return {"ok": False, "error": "No se encontraron datos válidos en el PDF."}
@@ -73,6 +72,6 @@ async def procesar_pdf(file: UploadFile = File(...)):
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
-
+# Para correr localmente
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=10000)
