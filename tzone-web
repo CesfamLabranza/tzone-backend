@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Analizador de Termografía TZone</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background: #f2f2f2;
+        }
+        h2 {
+            margin-top: 30px;
+        }
+        #resultadoTabla {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        #resultadoTabla th,
+        #resultadoTabla td {
+            border: 1px solid #aaa;
+            padding: 8px;
+            text-align: center;
+            background: white;
+        }
+        #graficoContainer {
+            width: 95%;
+            height: 400px;
+            margin-top: 30px;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+        }
+        .card {
+            background: white;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>📈 Analizador de Termografía TZone</h1>
+
+<input type="file" id="fileInput" accept="application/pdf">
+<button onclick="procesarPDF()">Procesar PDF</button>
+
+<div id="graficoContainer" style="display:none;">
+    <canvas id="grafico"></canvas>
+</div>
+
+<div id="estadisticas" class="card" style="display:none;">
+    <h2>Resultados Generales</h2>
+    <p id="maxTemp"></p>
+    <p id="minTemp"></p>
+</div>
+
+<h2>Resultados</h2>
+
+<table id="resultadoTabla">
+    <thead>
+        <tr>
+            <th>Fecha</th>
+            <th>Hora</th>
+            <th>Temp (°C)</th>
+            <th>Humedad (%)</th>
+        </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<script>
+const API_URL = "https://tzone-backend-gqhn.onrender.com/procesar_pdf";
+
+async function procesarPDF() {
+    const file = document.getElementById("fileInput").files[0];
+
+    if (!file) {
+        alert("Seleccione un PDF primero.");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const res = await fetch(API_URL, {
+        method: "POST",
+        body: formData
+    });
+
+    const json = await res.json();
+
+    if (!json.datos || json.datos.length === 0) {
+        alert("No se pudieron leer datos del PDF.");
+        return;
+    }
+
+    mostrarTabla(json.datos);
+    generarGrafico(json.datos);
+    calcularEstadisticas(json.datos);
+}
+
+function mostrarTabla(datos) {
+    const tbody = document.querySelector("#resultadoTabla tbody");
+    tbody.innerHTML = "";
+
+    datos.forEach(x => {
+        const fila = `
+            <tr>
+                <td>${x.fecha}</td>
+                <td>${x.hora}</td>
+                <td>${x.temp}</td>
+                <td>${x.rh}</td>
+            </tr>`;
+        tbody.innerHTML += fila;
+    });
+}
+
+function generarGrafico(datos) {
+    document.getElementById("graficoContainer").style.display = "block";
+
+    const ctx = document.getElementById("grafico").getContext("2d");
+
+    if (window.miGrafico) window.miGrafico.destroy();
+
+    window.miGrafico = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: datos.map(x => `${x.fecha} ${x.hora}`),
+            datasets: [
+                {
+                    label: "Temperatura (°C)",
+                    data: datos.map(x => x.temp),
+                    borderColor: "red",
+                    borderWidth: 2
+                },
+                {
+                    label: "Humedad (%)",
+                    data: datos.map(x => x.rh),
+                    borderColor: "blue",
+                    borderWidth: 2
+                }
+            ]
+        }
+    });
+}
+
+function calcularEstadisticas(datos) {
+    let max = Math.max(...datos.map(x => x.temp));
+    let min = Math.min(...datos.map(x => x.temp));
+
+    document.getElementById("estadisticas").style.display = "block";
+    document.getElementById("maxTemp").innerText = "🌡️ Temperatura máxima: " + max + " °C";
+    document.getElementById("minTemp").innerText = "❄️ Temperatura mínima: " + min + " °C";
+}
+</script>
+
+</body>
+</html>
