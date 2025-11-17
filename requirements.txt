@@ -1,4 +1,5 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pdfplumber
+pandas
 python-multipart
