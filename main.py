@@ -1,42 +1,56 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
-import io
-import re
+import pandas as pd
+from io import BytesIO
 
 app = FastAPI()
 
-# Permitir llamadas desde cualquier origen (GitHub Pages)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Regex basado en tu PDF real
-PATRON = re.compile(r"(\d{2}/\d{2}/\d{4}),\s*(\d{2}:\d{2}:\d{2})\s+([\d\.]+)\s+([\d\.]+)")
+@app.get("/")
+def home():
+    return {"msg": "API funcionando"}
 
+@app.post("/procesar")
+async def procesar(file: UploadFile = File(...)):
+    try:
+        contenido = await file.read()
+        pdf = pdfplumber.open(BytesIO(contenido))
 
-@app.post("/procesar_pdf")
-async def procesar_pdf(file: UploadFile = File(...)):
-    contenido = await file.read()
-    datos = []
+        data = []
 
-    with pdfplumber.open(io.BytesIO(contenido)) as pdf:
-        for page in pdf.pages:
-            texto = page.extract_text() or ""
-            lineas = texto.split("\n")
+        for pagina in pdf.pages:
+            tablas = pagina.extract_tables()
+            for tabla in tablas:
+                for fila in tabla:
+                    if fila[0] == "Date":
+                        continue
 
-            for linea in lineas:
-                m = PATRON.search(linea)
-                if m:
-                    datos.append({
-                        "fecha": m.group(1),
-                        "hora": m.group(2),
-                        "temp": float(m.group(3)),
-                        "rh": float(m.group(4)),
-                    })
+                    try:
+                        fecha = fila[0]
+                        hora = fila[1]
+                        temp = float(fila[2])
+                        rh = float(fila[3])
+                        data.append({
+                            "fecha": fecha,
+                            "hora": hora,
+                            "temp": temp,
+                            "humedad": rh
+                        })
+                    except:
+                        pass
 
-    return {"datos": datos}
+        if not data:
+            return {"ok": False, "error": "No se pudieron leer datos del PDF"}
+
+        return {"ok": True, "registros": data}
+
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
