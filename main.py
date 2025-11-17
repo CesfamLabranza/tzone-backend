@@ -2,6 +2,8 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
 import uvicorn
+import tempfile
+import os
 
 app = FastAPI()
 
@@ -15,27 +17,35 @@ app.add_middleware(
 )
 
 def limpiar_numero(valor):
-    """Convierte texto a número, manejando comas."""
     try:
         return float(valor.replace(",", "."))
     except:
         return None
 
+
 @app.post("/procesar")
 async def procesar_pdf(file: UploadFile = File(...)):
     try:
-        contenido = await file.read()
+        # Crear archivo temporal
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            contenido = await file.read()
+            tmp.write(contenido)
+            temp_path = tmp.name
 
         datos = []
 
-        with pdfplumber.open(bytes(contenido)) as pdf:
+        # Abrir PDF desde archivo temporal (forma correcta para Render)
+        with pdfplumber.open(temp_path) as pdf:
             for pagina in pdf.pages:
                 tablas = pagina.extract_tables()
 
                 for tabla in tablas:
                     for fila in tabla:
-                        # Saltar filas inválidas o encabezados
+
+                        # Saltar encabezados o filas malas
                         if not fila or "Fecha" in fila[0]:
+                            continue
+                        if len(fila) < 4:
                             continue
 
                         try:
@@ -44,7 +54,6 @@ async def procesar_pdf(file: UploadFile = File(...)):
                             temp = limpiar_numero(fila[2])
                             hum = limpiar_numero(fila[3])
 
-                            # Validar datos correctos
                             if temp is None or hum is None:
                                 continue
 
@@ -54,8 +63,12 @@ async def procesar_pdf(file: UploadFile = File(...)):
                                 "Temp_C": temp,
                                 "RH": hum
                             })
+
                         except:
                             continue
+
+        # Borrar archivo temporal
+        os.remove(temp_path)
 
         if not datos:
             return {"ok": False, "error": "No se encontraron datos válidos en el PDF."}
@@ -66,6 +79,5 @@ async def procesar_pdf(file: UploadFile = File(...)):
         return {"ok": False, "error": str(e)}
 
 
-# Para correr localmente (Render NO usa esto)
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=10000)
