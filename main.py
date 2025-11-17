@@ -1,13 +1,12 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
+from io import BytesIO
 import uvicorn
-import tempfile
-import os
 
 app = FastAPI()
 
-# Habilitar CORS para permitir acceso desde GitHub Pages
+# Habilitar CORS para web GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,23 +25,22 @@ def limpiar_numero(valor):
 @app.post("/procesar")
 async def procesar_pdf(file: UploadFile = File(...)):
     try:
-        # Crear archivo temporal
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            contenido = await file.read()
-            tmp.write(contenido)
-            temp_path = tmp.name
+        contenido = await file.read()
+
+        # 🔥 ESTA ES LA CLAVE 🔥
+        # Convertimos el contenido a un archivo en memoria con seek()
+        archivo_memoria = BytesIO(contenido)
 
         datos = []
 
-        # Abrir PDF desde archivo temporal (forma correcta para Render)
-        with pdfplumber.open(temp_path) as pdf:
+        # Abrir PDF desde BytesIO (FUNCIONA SIEMPRE)
+        with pdfplumber.open(archivo_memoria) as pdf:
             for pagina in pdf.pages:
                 tablas = pagina.extract_tables()
 
                 for tabla in tablas:
                     for fila in tabla:
 
-                        # Saltar encabezados o filas malas
                         if not fila or "Fecha" in fila[0]:
                             continue
                         if len(fila) < 4:
@@ -66,9 +64,6 @@ async def procesar_pdf(file: UploadFile = File(...)):
 
                         except:
                             continue
-
-        # Borrar archivo temporal
-        os.remove(temp_path)
 
         if not datos:
             return {"ok": False, "error": "No se encontraron datos válidos en el PDF."}
