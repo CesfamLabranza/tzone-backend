@@ -1,13 +1,13 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import pdfplumber
-from io import BytesIO
-import uvicorn
 import re
+from io import BytesIO
+from datetime import datetime
 
 app = FastAPI()
 
-# Habilitar CORS para permitir acceso desde GitHub Pages
+# 🔓 Permitir acceso desde cualquier origen (para GitHub Pages)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,62 +16,92 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def limpiar_numero(valor):
-    """Convierte texto con coma a float."""
-    try:
-        return float(valor.replace(",", "."))
-    except:
-        return None
+# REGEX PERFECTO (según tu formato exacto)
+REGEX = r"(\d{2}/\d{2}/\d{4}),\s+(\d{2}:\d{2}:\d{2})\s+(\d+\.\d+)\s+(\d+\.\d+)"
 
-# 🔎 Detecta filas del PDF TZone con REGEX
-PATRON = re.compile(
-    r"(\d{2}/\d{2}/\d{4}),?\s+(\d{2}:\d{2}:\d{2})\s+([\d.,]+)\s+([\d.,]+)"
-)
 
-@app.post("/procesar")
+@app.post("/procesar_pdf/")
 async def procesar_pdf(file: UploadFile = File(...)):
     try:
-        # Leemos el contenido del PDF
-        contenido = await file.read()
-        archivo_memoria = BytesIO(contenido)
+        file_bytes = await file.read()
+        pdf_buffer = BytesIO(file_bytes)
 
         datos = []
 
-        # Abrir PDF desde BytesIO (compatible Render)
-        with pdfplumber.open(archivo_memoria) as pdf:
-            for pagina in pdf.pages:
-                texto = pagina.extract_text()
+        # 📄 Leer PDF página por página
+        with pdfplumber.open(pdf_buffer) as pdf:
+            for page in pdf.pages:
+                text = page.extract_text()
 
-                if not texto:
+                if not text:
                     continue
 
-                # Procesar línea por línea
-                for linea in texto.split("\n"):
-                    coincide = PATRON.search(linea)
-                    if coincide:
-                        fecha, hora, temp, rh = coincide.groups()
+                # Buscar todas las coincidencias en la página
+                matches = re.findall(REGEX, text)
 
-                        temp = limpiar_numero(temp)
-                        rh = limpiar_numero(rh)
+                for fecha, hora, temp, hum in matches:
+                    datos.append({
+                        "fecha": fecha,
+                        "hora": hora,
+                        "temp": float(temp),
+                        "hum": float(hum),
+                        "timestamp": datetime.strptime(f"{fecha} {hora}", "%d/%m/%Y %H:%M:%S")
+                    })
 
-                        if temp is None or rh is None:
-                            continue
+        if len(datos) == 0:
+            return {"error": "No se encontraron datos en el PDF"}
 
-                        datos.append({
-                            "Fecha": fecha,
-                            "Hora": hora,
-                            "Temp_C": temp,
-                            "RH": rh
-                        })
+        # -------------------------------
+        # 📊 Cálculo de máximos y mínimos
+        # -------------------------------
+        max_temp = max(datos, key=lambda x: x["temp"])
+        min_temp = min(datos, key=lambda x: x["temp"])
 
-        if not datos:
-            return {"ok": False, "error": "No se encontraron datos válidos en el PDF."}
+        resumen_general = {
+            "temp_max": max_temp["temp"],
+            "fecha_max": max_temp["fecha"],
+            "hora_max": max_temp["hora"],
 
-        return {"ok": True, "datos": datos}
+            "temp_min": min_temp["temp"],
+            "fecha_min": min_temp["fecha"],
+            "hora_min": min_temp["hora"],
+        }
+
+        # Resumen por día
+        resumen_dias = {}
+        for d in datos:
+            dia = d["fecha"]
+
+            if dia not in resumen_dias:
+                resumen_dias[dia] = {
+                    "max": d,
+                    "min": d
+                }
+
+            if d["temp"] > resumen_dias[dia]["max"]["temp"]:
+                resumen_dias[dia]["max"] = d
+
+            if d["temp"] < resumen_dias[dia]["min"]["temp"]:
+                resumen_dias[dia]["min"] = d
+
+        resumen_dias_final = []
+        for dia, r in resumen_dias.items():
+            resumen_dias_final.append({
+                "fecha": dia,
+                "temp_max": r["max"]["temp"],
+                "hora_max": r["max"]["hora"],
+                "temp_min": r["min"]["temp"],
+                "hora_min": r["min"]["hora"]
+            })
+
+        # -------------------------------
+        # 📤 Respuesta final al frontend
+        # -------------------------------
+        return {
+            "resumen_general": resumen_general,
+            "resumen_dias": resumen_dias_final,
+            "datos": datos
+        }
 
     except Exception as e:
-        return {"ok": False, "error": str(e)}
-
-# Para correr localmente
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=10000)
+        return {"error": str(e)}
